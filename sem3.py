@@ -29,11 +29,17 @@ class ContentRecommender:
         self.movies_df = movies_df.copy()
         self.movies_df["genres"] = self.movies_df["genres"].fillna("")
         vectorizer = CountVectorizer(tokenizer=lambda s: s.split("|"), lowercase=False)
-        ###########################################################################
-        # TODO: Строим матрицу эмбеддингов для фильмов и сохраняем в self.embeddings                       
-
-        ###########################################################################
         
+        genre_matrix = vectorizer.fit_transform(self.movies_df["genres"])
+     
+        max_movie_id = self.movies_df["movieId"].max()
+        n_genres = genre_matrix.shape[1]
+        
+        self.embeddings = np.zeros((max_movie_id + 1, n_genres))
+        
+        for idx, row in self.movies_df.iterrows():
+            movie_id = row["movieId"]
+            self.embeddings[movie_id] = genre_matrix[idx].toarray()[0]
 
     def predict_rating(self, user_id: int, item_id: int, k: int = 5) -> float:
         """
@@ -56,21 +62,47 @@ class ContentRecommender:
         Returns:
             float: предсказанный рейтинг
         """
-        raise NotImplementedError("Реализуйте функцию predict_rating")
-
-    def predict_items_for_user(
-        self, user_id: int, k: int = 5, n_recommendations: int = 5
-    ) -> list:
-        """
-        Рекомендует фильмы пользователю user_id на основе контента фильма.
-
-        Алгоритм:
-        1) Берем все фильмы, которые оценил пользователь.
-        3) Строим профиль пользователя как взвешенное среднее жанров оцененных фильмов.
-        4) Для всех фильмов, которые пользователь не оценил, считаем сходство с профилем.
-        5) Сортируем по убыванию сходства и возвращаем top-n.
-        """
-        raise NotImplementedError("Реализуйте функцию predict_items_for_user")
+        
+        target_vec = self.embeddings[item_id]
+       
+        user_ratings = self.ui_matrix[user_id]
+        rated_items = np.where(user_ratings > 0)[0]
+        
+        if len(rated_items) == 0:
+            return 0.0
+        
+        rated_vectors = self.embeddings[rated_items]
+      
+        target_norm = np.linalg.norm(target_vec)
+        rated_norms = np.linalg.norm(rated_vectors, axis=1)
+        
+        if target_norm == 0:
+            return 0.0
+        
+        similarities = np.dot(rated_vectors, target_vec) / (rated_norms * target_norm)
+        
+        similarities = np.nan_to_num(similarities)
+        
+        sorted_indices = np.argsort(similarities)[::-1]
+        
+        top_k_indices = []
+        top_k_similarities = []
+        top_k_ratings = []
+        
+        for idx in sorted_indices:
+            if similarities[idx] > 0 and len(top_k_indices) < k:
+                movie_idx = rated_items[idx]
+                top_k_indices.append(movie_idx)
+                top_k_similarities.append(similarities[idx])
+                top_k_ratings.append(user_ratings[movie_idx])
+        
+        if len(top_k_similarities) == 0:
+            return 0.0
+        
+        sum_similarities = sum(top_k_similarities)
+        weighted_rating = sum(s * r for s, r in zip(top_k_similarities, top_k_ratings)) / sum_similarities
+        
+        return np.clip(weighted_rating, 0.0, 5.0)
 
 
 # Пример использования для дебага:
